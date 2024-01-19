@@ -1,0 +1,9 @@
+{
+	"name": "shared",
+	"version": "1.0.0",
+	"description": "react中的公用方法和类型",
+	"main": "index.js",
+	"keywords": [],
+	"author": "",
+	"license": "ISC"
+}
