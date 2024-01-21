@@ -8,6 +8,8 @@ import {
 import { Key, Props, ReactElementType, Ref } from '../../shared/ReactTypes';
 import { Flags, NoFlags } from './fiberFlags';
 import { Container } from 'hostConfig';
+import { Lane, Lanes, NoLane, NoLanes } from './fiberLanes';
+import { Effect } from './fiberHooks';
 
 export class FiberNode {
 	tag: WorkTag;
@@ -31,6 +33,7 @@ export class FiberNode {
 	subTreeFlags: Flags;
 	flags: Flags;
 	deletions: FiberNode[] | null;
+
 	constructor(tag: WorkTag, pendingProps: Props, key: Key) {
 		// FiberNode的类型
 		this.tag = tag;
@@ -68,17 +71,36 @@ export class FiberNode {
 	}
 }
 
+export interface PendingPassiveEffects {
+	unmount: Effect[];
+	update: Effect[];
+}
 export class FiberRootNode {
 	container: Container;
 	current: FiberNode;
 	// 已经更新完后的hostRootFiber
 	finishedWork: FiberNode | null;
+
+	pendingLanes: Lanes;
+	finishedLane: Lane;
+
+	// 收集Fiber tree中各FC Fiber节点所拥有的useEffect对应的副作用函数
+	PendingPassiveEffects: PendingPassiveEffects;
+
 	constructor(container: Container, hostRootFiber: FiberNode) {
 		// 建立FiberRootNode 与 HostRootFiber之间的联系
 		this.container = container;
 		this.current = hostRootFiber;
 		hostRootFiber.stateNode = this;
 		this.finishedWork = null;
+
+		this.pendingLanes = NoLanes;
+		this.finishedLane = NoLane;
+
+		this.PendingPassiveEffects = {
+			unmount: [],
+			update: []
+		};
 	}
 }
 

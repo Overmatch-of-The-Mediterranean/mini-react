@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      scheduler:
+        specifier: ^0.23.0
+        version: 0.23.0
     devDependencies:
       '@babel/core':
         specifier: ^7.20.5

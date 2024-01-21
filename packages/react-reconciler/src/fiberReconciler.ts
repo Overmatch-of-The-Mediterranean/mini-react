@@ -8,7 +8,8 @@ import {
 	enqueueUpdate
 } from './updateQueue';
 import { ReactElementType } from 'shared/ReactTypes';
-import { schedulerUpdateOnFiber } from './workLoop';
+import { scheduleUpdateOnFiber } from './workLoop';
+import { requestUpdateLane } from './fiberLanes';
 
 // ReactDOM.createRoot(rootElement).render(<App/>)
 // 执行ReactDOM.createRoot(rootElement)时，内部会调用createContainer，创建HostRootFiber和FiberRootNode
@@ -26,13 +27,14 @@ export function updateContainer(
 	root: FiberRootNode
 ) {
 	const hostRootFiber = root.current;
-	const update = createUpdate<ReactElementType | null>(element);
+	const lane = requestUpdateLane();
+	const update = createUpdate<ReactElementType | null>(element, lane);
 	enqueueUpdate(
 		hostRootFiber.updateQueue as UpdateQueue<ReactElementType | null>,
 		update
 	);
 
 	// 将渲染与触发更新的机制连接了起来
-	schedulerUpdateOnFiber(hostRootFiber);
+	scheduleUpdateOnFiber(hostRootFiber, lane);
 	return element;
 }

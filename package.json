@@ -4,11 +4,10 @@
 	"description": "",
 	"main": "index.js",
 	"scripts": {
-		"test": "echo \"Error: no test specified\" && exit 1",
+		"test": "jest --config scripts/jest/jest.config.js",
 		"lint": "eslint --ext .ts,.jsx,.tsx --fix --quite ./packages",
 		"build:dev": "rimraf dist && rollup --bundleConfigAsCjs --config scripts/rollup/dev.config.js",
-		"demo": "vite serve demos/test-fc/ --config scripts/vite/vite.config.js --force",
-		"test": "jest --config scripts/jest/jest.config.js"
+		"demo": "vite serve demos/test-fc/ --config scripts/vite/vite.config.js --force"
 	},
 	"keywords": [],
 	"author": "",
@@ -45,5 +44,8 @@
 		"rollup-plugin-typescript2": "^0.34.1",
 		"typescript": "^4.8.4",
 		"vite": "^3.2.3"
+	},
+	"dependencies": {
+		"scheduler": "^0.23.0"
 	}
 }
