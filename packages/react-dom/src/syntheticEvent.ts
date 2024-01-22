@@ -15,14 +15,14 @@ export interface DOMElement extends Element {
 	[elementPropsKey]: Props;
 }
 
-export type EventCallback = (e: Event) => void;
+type EventCallback = (e: Event) => void;
 
-export interface Paths {
+interface Paths {
 	capture: EventCallback[];
 	bubble: EventCallback[];
 }
 
-export interface SyntheticEvent extends Event {
+interface SyntheticEvent extends Event {
 	__stopPropagation: boolean;
 }
 

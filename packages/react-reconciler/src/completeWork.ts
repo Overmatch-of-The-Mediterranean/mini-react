@@ -2,6 +2,7 @@ import { FiberNode } from './fiber';
 import { NoFlags, Update } from './fiberFlags';
 import {
 	Container,
+	Instance,
 	appendInitialChild,
 	createInstance,
 	createTextInstance
@@ -13,7 +14,7 @@ import {
 	HostRoot,
 	HostText
 } from './workTags';
-import { updateFiberProps } from 'react-dom/src/syntheticEvent';
+// import { updateFiberProps } from 'react-dom/src/syntheticEvent';
 
 function markUpdate(fiber: FiberNode) {
 	fiber.flags |= Update;
@@ -33,7 +34,8 @@ export const completeWork = (wip: FiberNode) => {
 				// update
 
 				// reactDOM与reconciler对接的第二种时机，更新props时
-				updateFiberProps(wip.stateNode, newProps);
+				// updateFiberProps(wip.stateNode, newProps);
+				markUpdate(wip);
 			} else {
 				// 创建DOM
 				const instance = createInstance(wip.type, newProps);
@@ -71,7 +73,7 @@ export const completeWork = (wip: FiberNode) => {
 	}
 };
 
-function appendAllChildren(parent: Container, wip: FiberNode) {
+function appendAllChildren(parent: Container | Instance, wip: FiberNode) {
 	let node = wip.child;
 
 	// 将子fiber对应的真实DOM插入到父真实DOM中，因为complete是向上归的过程

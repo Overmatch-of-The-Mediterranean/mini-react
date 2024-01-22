@@ -29,7 +29,7 @@ export default [
 			}
 		],
 		// externals废弃
-		external: [...Object.keys(peerDependencies)],
+		external: [...Object.keys(peerDependencies), 'scheduler'],
 		// optimizeDeps: {
 		// 	exclude: [...Object.keys(peerDependencies)]
 		// },
