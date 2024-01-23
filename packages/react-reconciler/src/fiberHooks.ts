@@ -2,7 +2,9 @@ import internals from 'shared/internals';
 import { FiberNode } from './fiber';
 import { Action } from 'shared/ReactTypes';
 import { Dispatch, Dispatcher } from 'react/src/currentDispatcher';
+import currentBatchConfig from 'react/src/currentBatchConfig';
 import {
+	Update,
 	UpdateQueue,
 	createUpdate,
 	createUpdateQueue,
@@ -32,6 +34,8 @@ interface Hook {
 	memoizedState: any; // 存储与hook相对应的数据，对于useState存储的就是其需要的数据,对于useEffect存储的就是其对应的effect数据结构，对于useEffect而言，其内部也存在一条链表(由effect数据结构组成)，通过其hook中的memoizedState(effect)中的next连接起来
 	updateQueue: unknown;
 	next: Hook | null;
+	baseState: any;
+	baseQueue: Update<any> | null;
 }
 
 // useEffect是在当前依赖变化后的当前commit阶段完成以后，异步执行，
@@ -88,10 +92,109 @@ export function renderWithHooks(wip: FiberNode, lane: Lane) {
 	return children;
 }
 
+// FC的mount阶段，对应的hooks集合
+const HooksDispatcherOnMount: Dispatcher = {
+	useState: mountState,
+	useEffect: mountEffect,
+	useTransition: mountTransition
+};
+
 const HooksDispatcherOnUpdate: Dispatcher = {
 	useState: updateState,
-	useEffect: updateEffect
+	useEffect: updateEffect,
+	useTransition: updateTransition
 };
+
+// mount阶段真正的useState实现
+function mountState<State>(
+	initialState: State | (() => State)
+): [State, Dispatch<State>] {
+	// 获取当前useState对应的数据结构
+	const hook = mountWorkInProgressHook();
+
+	let memoizedState;
+	if (initialState instanceof Function) {
+		memoizedState = initialState();
+	} else {
+		memoizedState = initialState;
+	}
+
+	// 因为useState可以触发更新，将其对接入更新流程
+	const queue = createUpdateQueue<State>();
+	hook.baseState = memoizedState;
+	hook.memoizedState = memoizedState;
+	hook.updateQueue = queue;
+
+	// @ts-ignore
+	// 使用bind的目的是，useState返回的dispatch，可以在任何地方调用，因为内部所需的数据已经为其准备好了
+	const dispatch = dispatchSetState.bind(null, currentlyRenderingFiber!, queue);
+	queue.dispatch = dispatch;
+	return [memoizedState, dispatch];
+}
+
+function updateState<State>(): [State, Dispatch<State>] {
+	// 获取当前useState对应的数据结构
+	const hook = updateWorkInProgressHook();
+
+	// 计算新状态，即取出update进行消费，消费update实际上就是执行action，action就是用户传入setNum中的回调函数
+	// const [num, setNum] = useState(100)
+	// setNum(()=> num + 1)
+	const queue = hook.updateQueue as UpdateQueue<State>;
+	const baseState = hook.baseState;
+	const pending = queue.shared.pending;
+
+	const current = currentHook as Hook;
+	let baseQueue = current.baseQueue;
+
+	if (pending !== null) {
+		// pendingQueue和baseQueue保存在current中
+		if (baseQueue !== null) {
+			const baseFirst = baseQueue.next;
+			const pendingFirst = pending.next;
+
+			baseQueue.next = pendingFirst;
+			pending.next = baseFirst;
+		}
+
+		baseQueue = pending;
+		current.baseQueue = baseQueue;
+		// 将链表重置，防止上次更新的update残留
+		queue.shared.pending = null;
+	}
+	if (baseQueue !== null) {
+		const {
+			memoizedState,
+			baseQueue: newBaseQueue,
+			baseState: newBaseState
+		} = processUpdateQueue(baseState, baseQueue, renderLane);
+
+		hook.memoizedState = memoizedState;
+		hook.baseQueue = newBaseQueue;
+		hook.baseState = newBaseState;
+	}
+
+	return [hook.memoizedState, queue.dispatch as Dispatch<State>];
+}
+
+// 挂载阶段执行的useEffect
+function mountEffect<State>(
+	create: EffectCallback | void,
+	deps: EffectDeps | void
+) {
+	// console.log('mount deps', deps, create);
+	const hook = mountWorkInProgressHook();
+	const nextDeps = deps === undefined ? null : deps;
+
+	// 打上标志，代表此次挂载FC的该useEffect有副作用需要执行
+	(currentlyRenderingFiber as FiberNode).flags |= PassiveEffect;
+	// 创建该useEffect对应的effect结构，并打上Passive | HookHasEffect，Passive代表useEffect对应的effect，HookHasEffect代表该effect的create副作用需要执行
+	hook.memoizedState = pushEffect(
+		Passive | HookHasEffect,
+		create,
+		undefined,
+		nextDeps
+	);
+}
 
 function updateEffect<State>(
 	create: EffectCallback | void,
@@ -132,6 +235,39 @@ function updateEffect<State>(
 	}
 }
 
+function mountTransition(): [boolean, (callback: () => void) => void] {
+	const [isPending, setPending] = mountState(false);
+	const hook = mountWorkInProgressHook();
+
+	const start = startTransition.bind(null, setPending);
+	hook.memoizedState = start;
+
+	return [isPending, start];
+}
+
+function updateTransition(): [boolean, (callback: () => void) => void] {
+	const [isPending] = updateState<boolean>();
+	const hook = updateWorkInProgressHook();
+
+	const start = hook.memoizedState;
+
+	return [isPending, start];
+}
+
+function startTransition(setPending: Dispatch<boolean>, callback: () => void) {
+	setPending(true);
+
+	// 改变优先级
+	const prevTransition = currentBatchConfig.transition;
+	currentBatchConfig.transition = 1;
+
+	callback();
+	setPending(false);
+
+	// 恢复优先级
+	currentBatchConfig.transition = prevTransition;
+}
+
 // 比较effect hook函数的依赖项是否发生变化
 function areHookInputsEqual(nextDeps: EffectDeps, prevDeps: EffectDeps) {
 	if (prevDeps === null || nextDeps === null) {
@@ -147,30 +283,6 @@ function areHookInputsEqual(nextDeps: EffectDeps, prevDeps: EffectDeps) {
 	}
 
 	return true;
-}
-
-function updateState<State>(): [State, Dispatch<State>] {
-	// 获取当前useState对应的数据结构
-	const hook = updateWorkInProgressHook();
-
-	// 计算新状态，即取出update进行消费，消费update实际上就是执行action，action就是用户传入setNum中的回调函数
-	// const [num, setNum] = useState(100)
-	// setNum(()=> num + 1)
-	const queue = hook.updateQueue as UpdateQueue<State>;
-	const pending = queue.shared.pending;
-
-	// 将链表重置，防止上次更新的update残留
-	queue.shared.pending = null;
-	if (pending !== null) {
-		const { memoizedState } = processUpdateQueue(
-			hook.memoizedState,
-			pending,
-			renderLane
-		);
-		hook.memoizedState = memoizedState;
-	}
-
-	return [hook.memoizedState, queue.dispatch as Dispatch<State>];
 }
 
 // 用于更新阶段，获取当前hook函数对应的hook数据结构
@@ -200,11 +312,13 @@ function updateWorkInProgressHook(): Hook {
 		}
 	}
 
-	currentHook = nextCurrentHook;
+	currentHook = nextCurrentHook as Hook;
 	const newHook: Hook = {
-		memoizedState: currentHook?.memoizedState,
-		updateQueue: currentHook?.updateQueue,
-		next: null
+		memoizedState: currentHook.memoizedState,
+		updateQueue: currentHook.updateQueue,
+		next: null,
+		baseState: currentHook.baseState,
+		baseQueue: currentHook.baseQueue
 	};
 
 	if (workInProgressHook === null) {
@@ -221,31 +335,6 @@ function updateWorkInProgressHook(): Hook {
 		workInProgressHook = newHook;
 	}
 	return workInProgressHook!;
-}
-// FC的mount阶段，对应的hooks集合
-const HooksDispatcherOnMount: Dispatcher = {
-	useState: mountState,
-	useEffect: mountEffect
-};
-
-// 挂载阶段执行的useEffect
-function mountEffect<State>(
-	create: EffectCallback | void,
-	deps: EffectDeps | void
-) {
-	// console.log('mount deps', deps, create);
-	const hook = mountWorkInProgressHook();
-	const nextDeps = deps === undefined ? null : deps;
-
-	// 打上标志，代表此次挂载FC的该useEffect有副作用需要执行
-	(currentlyRenderingFiber as FiberNode).flags |= PassiveEffect;
-	// 创建该useEffect对应的effect结构，并打上Passive | HookHasEffect，Passive代表useEffect对应的effect，HookHasEffect代表该effect的create副作用需要执行
-	hook.memoizedState = pushEffect(
-		Passive | HookHasEffect,
-		create,
-		undefined,
-		nextDeps
-	);
 }
 
 // 用来创建每个effect hook函数对应effect数据结构，将effect数据结构之间连接成环状链表
@@ -304,32 +393,6 @@ function createFCUpdateQueue<State>() {
 	return updateQueue;
 }
 
-// mount阶段真正的useState实现
-function mountState<State>(
-	initialState: State | (() => State)
-): [State, Dispatch<State>] {
-	// 获取当前useState对应的数据结构
-	const hook = mountWorkInProgressHook();
-
-	let memoizedState;
-	if (initialState instanceof Function) {
-		memoizedState = initialState();
-	} else {
-		memoizedState = initialState;
-	}
-
-	// 因为useState可以触发更新，将其对接入更新流程
-	const queue = createUpdateQueue<State>();
-	hook.memoizedState = memoizedState;
-	hook.updateQueue = queue;
-
-	// @ts-ignore
-	// 使用bind的目的是，useState返回的dispatch，可以在任何地方调用，因为内部所需的数据已经为其准备好了
-	const dispatch = dispatchSetState.bind(null, currentlyRenderingFiber!, queue);
-	queue.dispatch = dispatch;
-	return [memoizedState, dispatch];
-}
-
 function dispatchSetState<State>(
 	fiber: FiberNode,
 	updateQueue: UpdateQueue<State>,
@@ -349,7 +412,9 @@ function mountWorkInProgressHook(): Hook {
 	const hook: Hook = {
 		memoizedState: null, // 该hook对应数据存放在这
 		updateQueue: null, // hook会触发更新，使用updateQueue将其接入更新逻辑
-		next: null
+		next: null,
+		baseState: null,
+		baseQueue: null
 	};
 
 	if (workInProgressHook === null) {

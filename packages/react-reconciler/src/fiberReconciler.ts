@@ -10,6 +10,10 @@ import {
 import { ReactElementType } from 'shared/ReactTypes';
 import { scheduleUpdateOnFiber } from './workLoop';
 import { requestUpdateLane } from './fiberLanes';
+import {
+	unstable_ImmediatePriority,
+	unstable_runWithPriority
+} from 'scheduler';
 
 // ReactDOM.createRoot(rootElement).render(<App/>)
 // 执行ReactDOM.createRoot(rootElement)时，内部会调用createContainer，创建HostRootFiber和FiberRootNode
@@ -26,15 +30,19 @@ export function updateContainer(
 	element: ReactElementType | null,
 	root: FiberRootNode
 ) {
-	const hostRootFiber = root.current;
-	const lane = requestUpdateLane();
-	const update = createUpdate<ReactElementType | null>(element, lane);
-	enqueueUpdate(
-		hostRootFiber.updateQueue as UpdateQueue<ReactElementType | null>,
-		update
-	);
+	// 首屏渲染默认同步更新
+	unstable_runWithPriority(unstable_ImmediatePriority, () => {
+		const hostRootFiber = root.current;
+		const lane = requestUpdateLane();
+		const update = createUpdate<ReactElementType | null>(element, lane);
+		enqueueUpdate(
+			hostRootFiber.updateQueue as UpdateQueue<ReactElementType | null>,
+			update
+		);
 
-	// 将渲染与触发更新的机制连接了起来
-	scheduleUpdateOnFiber(hostRootFiber, lane);
+		// 将渲染与触发更新的机制连接了起来
+		scheduleUpdateOnFiber(hostRootFiber, lane);
+	});
+
 	return element;
 }

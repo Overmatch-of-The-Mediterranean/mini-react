@@ -1,6 +1,7 @@
 import { Dispatcher, resolveDispatcher } from './src/currentDispatcher';
 import { jsxDEV, jsx, isValidElement as isValidElementFn } from './src/jsx';
 import currentDispatcher from './src/currentDispatcher';
+import currentBatchConfig from './src/currentBatchConfig';
 import { EffectDeps } from '../react-reconciler/src/fiberHooks';
 
 // react暴露的hook，其本质是当前使用的hooks集合中的hook
@@ -16,9 +17,15 @@ export const useEffect: Dispatcher['useEffect'] = (create, deps) => {
 	return dispatcher.useEffect(create, deps);
 };
 
+export const useTransition: Dispatcher['useTransition'] = () => {
+	const dispatcher = resolveDispatcher();
+	return dispatcher.useTransition();
+};
+
 // 内部数据层
 export const __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = {
-	currentDispatcher
+	currentDispatcher,
+	currentBatchConfig
 };
 
 export const version = '1.0.0';

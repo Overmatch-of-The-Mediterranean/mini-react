@@ -10,6 +10,7 @@ import { Flags, NoFlags } from './fiberFlags';
 import { Container } from 'hostConfig';
 import { Lane, Lanes, NoLane, NoLanes } from './fiberLanes';
 import { Effect } from './fiberHooks';
+import { CallbackNode } from 'scheduler';
 
 export class FiberNode {
 	tag: WorkTag;
@@ -87,6 +88,9 @@ export class FiberRootNode {
 	// 收集Fiber tree中各FC Fiber节点所拥有的useEffect对应的副作用函数
 	PendingPassiveEffects: PendingPassiveEffects;
 
+	callbackNode: CallbackNode | null;
+	callbackPriority: Lane;
+
 	constructor(container: Container, hostRootFiber: FiberNode) {
 		// 建立FiberRootNode 与 HostRootFiber之间的联系
 		this.container = container;
@@ -101,6 +105,8 @@ export class FiberRootNode {
 			unmount: [],
 			update: []
 		};
+		this.callbackNode = null;
+		this.callbackPriority = NoLane;
 	}
 }
 

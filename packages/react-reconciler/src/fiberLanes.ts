@@ -4,15 +4,31 @@
     3.需要一套算法，决定那个优先级优先进入render阶段
 */
 
+import {
+	unstable_IdlePriority,
+	unstable_ImmediatePriority,
+	unstable_NormalPriority,
+	unstable_UserBlockingPriority,
+	unstable_getCurrentPriorityLevel
+} from 'scheduler';
 import { FiberRootNode } from './fiber';
+import currentBatchConfig from 'react/src/currentBatchConfig';
 
 export type Lane = number; // 代表update的优先级
 export type Lanes = number; // 代表lane的集合
 
-export const SyncLane = 0b0001;
+export const SyncLane = 0b00001;
+export const InputContinuousLane = 0b00010;
+export const DefaultLane = 0b00100;
+export const TransitionLane = 0b01000;
+export const IdleLane = 0b10000;
 
 export const NoLane = 0b0000;
 export const NoLanes = 0b0000;
+
+export function isSubsetOfLanes(set: Lanes, subset: Lane) {
+	return (set & subset) === subset;
+}
 
 export function mergeLanes(laneA: Lane, laneB: Lane): Lanes {
 	return laneA | laneB;
@@ -20,7 +36,14 @@ export function mergeLanes(laneA: Lane, laneB: Lane): Lanes {
 
 // 每次创建一个新update前掉用，获取该update的lane
 export function requestUpdateLane() {
-	return SyncLane;
+	const isTransition = currentBatchConfig.transition !== null;
+
+	if (isTransition) {
+		return TransitionLane;
+	}
+	const currentSchedulerPriority = unstable_getCurrentPriorityLevel();
+	const lane = schedulerPriorityToLane(currentSchedulerPriority);
+	return lane;
 }
 
 // 规定优先数越低，优先级越高
@@ -31,4 +54,37 @@ export function getHignesPriorityLane(lanes: Lanes): Lane {
 // 在commit阶段开始时，从Lanes中移除已经执行过的update对应的lane
 export function markRootFinished(root: FiberRootNode, lane: Lane) {
 	root.pendingLanes &= ~lane;
+}
+
+export function lanesToSchedulerPriority(lanes: Lanes) {
+	const lane = getHignesPriorityLane(lanes);
+
+	if (lane === SyncLane) {
+		return unstable_ImmediatePriority;
+	}
+
+	if (lane === InputContinuousLane) {
+		return unstable_UserBlockingPriority;
+	}
+
+	if (lane === DefaultLane) {
+		return unstable_NormalPriority;
+	}
+	return unstable_IdlePriority;
+}
+
+export function schedulerPriorityToLane(priority: number): Lane {
+	if (priority === unstable_ImmediatePriority) {
+		return SyncLane;
+	}
+
+	if (priority === unstable_UserBlockingPriority) {
+		return InputContinuousLane;
+	}
+
+	if (priority === unstable_NormalPriority) {
+		return DefaultLane;
+	}
+
+	return NoLane;
 }
