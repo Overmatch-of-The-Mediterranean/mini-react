@@ -1,5 +1,5 @@
 import { FiberNode } from './fiber';
-import { NoFlags, Update } from './fiberFlags';
+import { NoFlags, Ref, Update } from './fiberFlags';
 import {
 	Container,
 	Instance,
@@ -8,13 +8,19 @@ import {
 	createTextInstance
 } from 'hostConfig';
 import {
+	ContextProvider,
 	Fragment,
 	FunctionComponent,
 	HostComponent,
 	HostRoot,
 	HostText
 } from './workTags';
+import { popProvider } from './fiberContext';
 // import { updateFiberProps } from 'react-dom/src/syntheticEvent';
+
+function markRef(fiber: FiberNode) {
+	fiber.flags |= Ref;
+}
 
 function markUpdate(fiber: FiberNode) {
 	fiber.flags |= Update;
@@ -36,12 +42,19 @@ export const completeWork = (wip: FiberNode) => {
 				// reactDOM与reconciler对接的第二种时机，更新props时
 				// updateFiberProps(wip.stateNode, newProps);
 				markUpdate(wip);
+				if (current.ref !== wip.ref) {
+					markRef(wip);
+				}
 			} else {
 				// 创建DOM
 				const instance = createInstance(wip.type, newProps);
 				// 将DOM插入到DOM树中
 				appendAllChildren(instance, wip);
+
 				wip.stateNode = instance;
+				if (wip.ref !== null) {
+					markRef(wip);
+				}
 			}
 			bubbleProperties(wip);
 			return null;
@@ -63,6 +76,12 @@ export const completeWork = (wip: FiberNode) => {
 		case HostRoot:
 		case FunctionComponent:
 		case Fragment:
+			bubbleProperties(wip);
+			return null;
+		case ContextProvider:
+			const context = wip.type._context;
+			debugger;
+			popProvider(context);
 			bubbleProperties(wip);
 			return null;
 		default:

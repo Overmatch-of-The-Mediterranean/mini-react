@@ -8,6 +8,7 @@ import {
 	PassiveEffect,
 	PassiveMask,
 	Placement,
+	Ref,
 	Update
 } from './fiberFlags';
 import {
@@ -28,47 +29,47 @@ import { UpdateQueue } from './updateQueue';
 import { Effect, EffectCallback, FCUpdateQueue } from './fiberHooks';
 import { HookHasEffect } from './hookEffectTags';
 
-export const commitMutationEffects = (
-	finishedWork: FiberNode,
-	root: FiberRootNode
+export const commitEffects = (
+	phrase: 'mutation' | 'layout',
+	mask: Flags,
+	callback: (fiber: FiberNode, root: FiberRootNode) => void
 ) => {
-	let nextEffect: FiberNode | null = finishedWork;
-	// 开始进行DFS的向下递的过程，找到这一条路径上最后一个有与Mutation阶段相关的flags的FiberNode
-	while (nextEffect !== null) {
-		const child: FiberNode | null = nextEffect.child;
+	return (finishedWork: FiberNode, root: FiberRootNode) => {
+		let nextEffect: FiberNode | null = finishedWork;
+		// 开始进行DFS的向下递的过程，找到这一条路径上最后一个有与Mutation阶段相关的flags的FiberNode
+		while (nextEffect !== null) {
+			const child: FiberNode | null = nextEffect.child;
 
-		if (
-			(nextEffect.subTreeFlags & (MutationMask | PassiveMask)) !== NoFlags &&
-			child !== null
-		) {
-			// 找到这一条路径上最后一个有与Mutation阶段相关的flags的FiberNode;
-			nextEffect = child;
-		} else {
-			// 找到后，对FiberNode节点进行相应的DOM操作，并向上遍历 DFS
-			up: while (nextEffect !== null) {
-				// 开始处理FiberNode上与Mutation阶段相关的flags副作用
-				commitMutationEffectsOnFiber(nextEffect, root);
+			if ((nextEffect.subTreeFlags & mask) !== NoFlags && child !== null) {
+				// 找到这一条路径上最后一个有与Mutation阶段相关的flags的FiberNode;
+				nextEffect = child;
+			} else {
+				// 找到后，对FiberNode节点进行相应的DOM操作，并向上遍历 DFS
+				up: while (nextEffect !== null) {
+					// 开始处理FiberNode上与Mutation阶段相关的flags副作用
+					callback(nextEffect, root);
 
-				const sibling: FiberNode | null = nextEffect.sibling;
-				// 判断该Fiber是否有兄弟节点
-				if (sibling !== null) {
-					// 有则中断归的过程，对兄弟节点进行完整的递和归
-					nextEffect = sibling;
-					break up;
+					const sibling: FiberNode | null = nextEffect.sibling;
+					// 判断该Fiber是否有兄弟节点
+					if (sibling !== null) {
+						// 有则中断归的过程，对兄弟节点进行完整的递和归
+						nextEffect = sibling;
+						break up;
+					}
+
+					// 没有兄弟节点，则向上归
+					nextEffect = nextEffect.return;
 				}
-
-				// 没有兄弟节点，则向上归
-				nextEffect = nextEffect.return;
 			}
 		}
-	}
+	};
 };
 
 export const commitMutationEffectsOnFiber = (
 	finishedWork: FiberNode,
 	root: FiberRootNode
 ) => {
-	const flags = finishedWork.flags;
+	const { flags, tag } = finishedWork;
 
 	// 执行Placement对应的副作用，执行完后删除该标记
 	if ((flags & Placement) !== NoFlags) {
@@ -98,7 +99,57 @@ export const commitMutationEffectsOnFiber = (
 		commitPassiveEffect(finishedWork, root, 'update');
 		finishedWork.flags &= ~PassiveEffect;
 	}
+	// 解绑ref
+	if ((flags & Ref) !== NoFlags && tag === HostComponent) {
+		safelyDetachRef(finishedWork);
+	}
 };
+
+export const commitMutationEffects = commitEffects(
+	'mutation',
+	MutationMask | PassiveMask,
+	commitMutationEffectsOnFiber
+);
+
+export const commitLayoutEffectsOnFiber = (
+	finishedWork: FiberNode,
+	root: FiberRootNode
+) => {
+	const { flags, tag } = finishedWork;
+
+	// 绑定新ref
+	if ((flags & Ref) !== NoFlags && tag === HostComponent) {
+		safelyAttachRef(finishedWork);
+		finishedWork.flags &= ~Ref;
+	}
+};
+export const commitLayoutEffects = commitEffects(
+	'layout',
+	Ref,
+	commitLayoutEffectsOnFiber
+);
+function safelyDetachRef(fiber: FiberNode) {
+	const ref = fiber.ref;
+	if (ref !== null) {
+		if (typeof ref === 'function') {
+			ref(null);
+		} else {
+			ref.current = null;
+		}
+	}
+}
+
+function safelyAttachRef(fiber: FiberNode) {
+	const ref = fiber.ref;
+	if (ref !== null) {
+		const instance = fiber.stateNode;
+		if (typeof ref === 'function') {
+			ref(instance);
+		} else {
+			ref.current = instance;
+		}
+	}
+}
 
 // 收集useEffect中create与unmount函数, 即，将Fiber tree下每个FiberNode的useEffect对应的副作用收集到根(HostFiberNode)
 function commitPassiveEffect(
@@ -227,6 +278,7 @@ export const commitDeletion = (
 			case HostComponent:
 				recordHostChildrenToDelete(rootChildrenToDelete, unmountFiber);
 				// TODO 解绑ref
+				safelyDetachRef(unmountFiber);
 				return;
 			case HostText:
 				recordHostChildrenToDelete(rootChildrenToDelete, unmountFiber);

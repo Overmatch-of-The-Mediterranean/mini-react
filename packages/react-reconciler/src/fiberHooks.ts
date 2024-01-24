@@ -1,6 +1,6 @@
 import internals from 'shared/internals';
 import { FiberNode } from './fiber';
-import { Action } from 'shared/ReactTypes';
+import { Action, ReactContext } from 'shared/ReactTypes';
 import { Dispatch, Dispatcher } from 'react/src/currentDispatcher';
 import currentBatchConfig from 'react/src/currentBatchConfig';
 import {
@@ -58,7 +58,11 @@ export interface FCUpdateQueue<State> extends UpdateQueue<State> {
 	lastEffect: Effect | null;
 }
 
-export function renderWithHooks(wip: FiberNode, lane: Lane) {
+export function renderWithHooks(
+	wip: FiberNode,
+	Component: FiberNode['type'],
+	lane: Lane
+) {
 	// 保存当前正在render的FC对应的Component
 	currentlyRenderingFiber = wip;
 	renderLane = lane;
@@ -80,10 +84,10 @@ export function renderWithHooks(wip: FiberNode, lane: Lane) {
 	}
 
 	// 对于FC，type就是其函数本身
-	const component = wip.type;
 	const props = wip.pendingProps;
 	// 调用FC，其返回值就是children
-	const children = component(props);
+
+	const children = Component(props);
 
 	currentlyRenderingFiber = null;
 	workInProgressHook = null;
@@ -96,14 +100,42 @@ export function renderWithHooks(wip: FiberNode, lane: Lane) {
 const HooksDispatcherOnMount: Dispatcher = {
 	useState: mountState,
 	useEffect: mountEffect,
-	useTransition: mountTransition
+	useTransition: mountTransition,
+	useRef: mountRef,
+	useContext: readContext
 };
 
 const HooksDispatcherOnUpdate: Dispatcher = {
 	useState: updateState,
 	useEffect: updateEffect,
-	useTransition: updateTransition
+	useTransition: updateTransition,
+	useRef: updateRef,
+	useContext: readContext
 };
+
+function readContext<T>(context: ReactContext<T>): T {
+	const consumer = currentlyRenderingFiber;
+
+	if (consumer === null) {
+		console.warn('请在函数组件中使用useContext');
+	}
+	const value = context._currentValue;
+
+	return value;
+}
+
+function mountRef<T>(initialValue: T): { current: T } {
+	const hook = mountWorkInProgressHook();
+	const ref = { current: initialValue };
+	hook.memoizedState = ref;
+	return ref;
+}
+
+function updateRef<T>(initialValue: T): { current: T } {
+	const hook = updateWorkInProgressHook();
+
+	return hook.memoizedState;
+}
 
 // mount阶段真正的useState实现
 function mountState<State>(

@@ -1,11 +1,12 @@
 import {
+	ContextProvider,
 	Fragment,
 	FunctionComponent,
 	HostComponent,
 	HostRoot,
 	WorkTag
 } from './workTags';
-import { Key, Props, ReactElementType, Ref } from '../../shared/ReactTypes';
+import { Key, Props, ReactElementType, Ref } from 'shared/ReactTypes';
 import { Flags, NoFlags } from './fiberFlags';
 import { Container } from 'hostConfig';
 import { Lane, Lanes, NoLane, NoLanes } from './fiberLanes';
@@ -16,7 +17,7 @@ export class FiberNode {
 	tag: WorkTag;
 	type: any;
 	key: Key;
-	ref: Ref;
+	ref: Ref | null;
 	stateNode: any;
 
 	return: FiberNode | null;
@@ -137,6 +138,7 @@ export const createWorkInProgress = (
 	wip.updateQueue = current.updateQueue;
 	wip.memoizedProps = current.memoizedProps;
 	wip.memoizedState = current.memoizedState;
+	wip.ref = current.ref;
 
 	// 返回 正在创建的wip Fiber tree的HostRootFiber
 	return wip;
@@ -144,18 +146,21 @@ export const createWorkInProgress = (
 
 // beginWork阶段，创建子FiberNode使用的函数
 export function createFiberFromElement(element: ReactElementType) {
-	const { type, key, props } = element;
+	const { type, key, props, ref } = element;
 
 	let fiberTag: WorkTag = FunctionComponent;
 
 	if (typeof type === 'string') {
 		fiberTag = HostComponent;
+	} else if (typeof type === 'object') {
+		fiberTag = ContextProvider;
 	} else if (typeof type !== 'function') {
 		console.warn('为定义的type类型', fiberTag);
 	}
 
 	const fiber = new FiberNode(fiberTag, props, key);
 	fiber.type = type;
+	fiber.ref = ref;
 	return fiber;
 }
 export function createFiberFromFragment(elements: any[], key: Key) {

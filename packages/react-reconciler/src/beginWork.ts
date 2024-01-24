@@ -2,6 +2,7 @@ import { ReactElementType } from 'shared/ReactTypes';
 import { FiberNode } from './fiber';
 import { UpdateQueue, processUpdateQueue } from './updateQueue';
 import {
+	ContextProvider,
 	Fragment,
 	FunctionComponent,
 	HostComponent,
@@ -11,6 +12,8 @@ import {
 import { mountChildFibers, reconcileChildFibers } from './childFibers';
 import { renderWithHooks } from './fiberHooks';
 import { Lane } from './fiberLanes';
+import { Ref } from './fiberFlags';
+import { pushProvider } from './fiberContext';
 
 // 递归的递阶段
 export const beginWork = (wip: FiberNode, renderLane: Lane) => {
@@ -23,9 +26,11 @@ export const beginWork = (wip: FiberNode, renderLane: Lane) => {
 		case HostText:
 			return null;
 		case FunctionComponent:
-			return updateFunctionComponent(wip, renderLane);
+			return updateFunctionComponent(wip, wip.type, renderLane);
 		case Fragment:
 			return updateFragment(wip);
+		case ContextProvider:
+			return updateContextProvider(wip);
 		default:
 			if (__DEV__) {
 				console.warn('begin未实现的类型');
@@ -35,6 +40,19 @@ export const beginWork = (wip: FiberNode, renderLane: Lane) => {
 	return null;
 };
 
+function updateContextProvider(wip: FiberNode) {
+	const ProviderType = wip.type;
+	const context = ProviderType._context;
+	const newProps = wip.pendingProps;
+
+	debugger;
+	pushProvider(context, newProps.value);
+	const nextChildren = newProps.children;
+
+	reconcileChildren(wip, nextChildren);
+	return wip.child;
+}
+
 function updateFragment(wip: FiberNode) {
 	const newChildren = wip.pendingProps;
 	reconcileChildren(wip, newChildren);
@@ -43,9 +61,13 @@ function updateFragment(wip: FiberNode) {
 }
 
 // 函数组件的处理
-function updateFunctionComponent(wip: FiberNode, renderLane: Lane) {
+function updateFunctionComponent(
+	wip: FiberNode,
+	Component: FiberNode['type'],
+	renderLane: Lane
+) {
 	// 相当于执行函数组件这个函数，获取其返回值，其返回值就是Children
-	const nextChildren = renderWithHooks(wip, renderLane);
+	const nextChildren = renderWithHooks(wip, Component, renderLane);
 	// 根据children的ReactElement生成对应的FiberNode
 	reconcileChildren(wip, nextChildren);
 	return wip.child;
@@ -74,6 +96,7 @@ function updateHostRoot(wip: FiberNode, renderLane: Lane) {
 function updateHostComponent(wip: FiberNode) {
 	const nextProps = wip.pendingProps;
 	const nextChildren = nextProps.children;
+	markRef(wip.alternate, wip);
 	reconcileChildren(wip, nextChildren);
 	return wip.child;
 }
@@ -88,5 +111,16 @@ function reconcileChildren(wip: FiberNode, children?: ReactElementType) {
 	} else {
 		// 挂载
 		wip.child = mountChildFibers(wip, null, children);
+	}
+}
+
+function markRef(current: FiberNode | null, workInProgress: FiberNode) {
+	const ref = workInProgress.ref;
+
+	if (
+		(current === null && ref !== null) ||
+		(current !== null && current.ref !== ref)
+	) {
+		workInProgress.flags |= Ref;
 	}
 }

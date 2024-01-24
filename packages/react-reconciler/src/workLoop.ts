@@ -4,6 +4,7 @@ import {
 	commitHookEffectListDestroy,
 	commitHookEffectListUnmount,
 	commitHookEffectListUpdate,
+	commitLayoutEffects,
 	commitMutationEffects
 } from './commitWork';
 import { completeWork } from './completeWork';
@@ -302,6 +303,7 @@ function commitRoot(root: FiberRootNode) {
 		// 至此已经完成wip Fiber tree的渲染，切换current的指向
 		root.current = finishedWork;
 		// layout
+		commitLayoutEffects(finishedWork, root);
 	} else {
 		root.current = finishedWork;
 	}

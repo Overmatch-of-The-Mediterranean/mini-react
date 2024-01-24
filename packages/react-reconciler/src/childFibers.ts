@@ -50,6 +50,19 @@ export function childReconciler(shouldTrackEffect: boolean) {
 		return clone;
 	}
 
+	function getElementKeyToUse(element: any, index?: number): Key {
+		if (
+			Array.isArray(element) ||
+			typeof element === 'string' ||
+			typeof element === 'number' ||
+			element === undefined ||
+			element === null
+		) {
+			return index;
+		}
+		return element.key !== null ? element.key : index;
+	}
+
 	// 这个函数其实就是，拿新children中每一项，去旧的children中查找，看是否能复用，不能复用就新建节点。
 	function updateFromMap(
 		returnFiber: FiberNode,
@@ -57,33 +70,8 @@ export function childReconciler(shouldTrackEffect: boolean) {
 		index: number,
 		element: any
 	): FiberNode | null {
-		const keyToUse = element.key !== null ? element.key : index;
+		const keyToUse = getElementKeyToUse(element, index);
 		const before = existingChildren.get(keyToUse);
-
-		// 处理第三种Fragment情况
-		/*
-            jsx('ul', {
-                children:[
-                    jsx('li', {
-                        children:'a'
-                    }),
-                    jsx('li', {
-                        childrem:'b'
-                    }),
-                    arr
-                ]
-            })
-        */
-		// 把arr当作Fragment来处理
-		if (Array.isArray(element)) {
-			return updateFragment(
-				returnFiber,
-				before,
-				element,
-				keyToUse,
-				existingChildren
-			);
-		}
 
 		// 新的一项element时HostText类型，看其是否能复用
 		if (typeof element === 'string' || typeof element === 'number') {
@@ -119,7 +107,30 @@ export function childReconciler(shouldTrackEffect: boolean) {
 					return createFiberFromElement(element);
 			}
 		}
-
+		// 处理第三种Fragment情况
+		/*
+            jsx('ul', {
+                children:[
+                    jsx('li', {
+                        children:'a'
+                    }),
+                    jsx('li', {
+                        childrem:'b'
+                    }),
+                    arr
+                ]
+            })
+        */
+		// 把arr当作Fragment来处理
+		if (Array.isArray(element)) {
+			return updateFragment(
+				returnFiber,
+				before,
+				element,
+				keyToUse,
+				existingChildren
+			);
+		}
 		return null;
 	}
 
