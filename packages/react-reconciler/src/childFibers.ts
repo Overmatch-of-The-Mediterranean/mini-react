@@ -17,6 +17,8 @@ export function childReconciler(shouldTrackEffect: boolean) {
 		returnFiber: FiberNode,
 		currentFirstChild: FiberNode
 	) {
+		// shouldTrackEffect为true代表更新，shouldTrackEffect为false代表挂载
+		// 只有更新才有可能进行删除操作，挂载则不需要进行删除操作
 		if (!shouldTrackEffect) {
 			return;
 		}
@@ -30,6 +32,8 @@ export function childReconciler(shouldTrackEffect: boolean) {
 
 	// 将要删除的FiberNode推入父Fiber的deletions，并对父Fiber打上ChildrenDeletion标记
 	function deleteChild(returnFiber: FiberNode, childToDelete: FiberNode) {
+		// shouldTrackEffect为true代表更新，shouldTrackEffect为false代表挂载
+		// 只有更新才有可能进行删除操作，挂载则不需要进行删除操作
 		if (!shouldTrackEffect) {
 			return;
 		}
@@ -198,6 +202,8 @@ export function childReconciler(shouldTrackEffect: boolean) {
 				lastNewFiber = lastNewFiber.sibling;
 			}
 
+			// shouldTrackEffect为true代表更新，shouldTrackEffect为false代表挂载
+			// 只有更新时才需要对节点是否移动进行判断，挂载时节点直接挂载，不存在移动不移动
 			if (!shouldTrackEffect) {
 				continue;
 			}
@@ -214,12 +220,12 @@ export function childReconciler(shouldTrackEffect: boolean) {
 					lastPlacedIndex = oldIndex;
 				}
 			} else {
-				//mount
+				// mount，代表更新需要新增的节点，为其打上标记
 				newFiber.flags |= Placement;
 			}
 		}
 
-		// 4.将existingChildren中剩余的都标记删除
+		// 4.将existingChildren中剩余没有被复用的节点都标记删除
 		existingChildren.forEach((fiber) => {
 			deleteChild(returnFiber, fiber);
 		});
@@ -375,8 +381,8 @@ export function childReconciler(shouldTrackEffect: boolean) {
 	};
 }
 
-// shouldTrackEffect为true，使用shouldTrackEffect决定是否打Placement标记
+// shouldTrackEffect为true，代表此次beginWork是更新，使用shouldTrackEffect决定是否打Placement标记
 export const reconcileChildFibers = childReconciler(true);
 
-// shouldTrackEffect为false
+// shouldTrackEffect为false，代表此次beginWork是挂载
 export const mountChildFibers = childReconciler(false);

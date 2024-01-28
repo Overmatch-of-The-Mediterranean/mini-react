@@ -2,6 +2,10 @@ import { Dispatcher, resolveDispatcher } from './src/currentDispatcher';
 import { jsxDEV, jsx, isValidElement as isValidElementFn } from './src/jsx';
 import currentDispatcher from './src/currentDispatcher';
 import currentBatchConfig from './src/currentBatchConfig';
+export {
+	REACT_FRAGMENT_TYPE as Fragment,
+	REACT_SUSPENSE_TYPE as Suspense
+} from 'shared/ReactSymbols';
 export { createContext } from './src/context';
 
 // react暴露的hook，其本质是当前使用的hooks集合中的hook
@@ -30,6 +34,11 @@ export const useRef: Dispatcher['useRef'] = (initialValue) => {
 export const useContext: Dispatcher['useContext'] = (context) => {
 	const dispatcher = resolveDispatcher();
 	return dispatcher.useContext(context);
+};
+
+export const use: Dispatcher['use'] = (usable) => {
+	const dispatcher = resolveDispatcher();
+	return dispatcher.use(usable);
 };
 
 // 内部数据层

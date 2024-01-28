@@ -4,14 +4,17 @@ import {
 	FunctionComponent,
 	HostComponent,
 	HostRoot,
+	OffscreenComponent,
+	SuspenseComponent,
 	WorkTag
 } from './workTags';
-import { Key, Props, ReactElementType, Ref } from 'shared/ReactTypes';
+import { Key, Props, ReactElementType, Ref, Wakeable } from 'shared/ReactTypes';
 import { Flags, NoFlags } from './fiberFlags';
 import { Container } from 'hostConfig';
 import { Lane, Lanes, NoLane, NoLanes } from './fiberLanes';
 import { Effect } from './fiberHooks';
 import { CallbackNode } from 'scheduler';
+import { REACT_PROVIDER_TYPE, REACT_SUSPENSE_TYPE } from 'shared/ReactSymbols';
 
 export class FiberNode {
 	tag: WorkTag;
@@ -92,6 +95,10 @@ export class FiberRootNode {
 	callbackNode: CallbackNode | null;
 	callbackPriority: Lane;
 
+	pingCache: WeakMap<Wakeable<any>, Set<Lane>> | null;
+	suspendedLanes: Lanes;
+	pingdLanes: Lanes;
+
 	constructor(container: Container, hostRootFiber: FiberNode) {
 		// 建立FiberRootNode 与 HostRootFiber之间的联系
 		this.container = container;
@@ -108,6 +115,10 @@ export class FiberRootNode {
 		};
 		this.callbackNode = null;
 		this.callbackPriority = NoLane;
+
+		this.pingCache = null;
+		this.suspendedLanes = NoLanes;
+		this.pingdLanes = NoLanes;
 	}
 }
 
@@ -116,6 +127,7 @@ export const createWorkInProgress = (
 	pendingProps: Props
 ) => {
 	let wip = current.alternate;
+
 	// current是当前正在显示的UI对应的HostRootFiber，根据其有无对应的 wip HostRootFiber
 	// 来决定进行挂载流程还是更新流程的操作
 	if (wip === null) {
@@ -147,13 +159,19 @@ export const createWorkInProgress = (
 // beginWork阶段，创建子FiberNode使用的函数
 export function createFiberFromElement(element: ReactElementType) {
 	const { type, key, props, ref } = element;
+	// console.log('type', type);
 
 	let fiberTag: WorkTag = FunctionComponent;
 
 	if (typeof type === 'string') {
 		fiberTag = HostComponent;
-	} else if (typeof type === 'object') {
+	} else if (
+		typeof type === 'object' &&
+		type.$$typeof === REACT_PROVIDER_TYPE
+	) {
 		fiberTag = ContextProvider;
+	} else if (type === REACT_SUSPENSE_TYPE) {
+		fiberTag = SuspenseComponent;
 	} else if (typeof type !== 'function') {
 		console.warn('为定义的type类型', fiberTag);
 	}
@@ -166,4 +184,14 @@ export function createFiberFromElement(element: ReactElementType) {
 export function createFiberFromFragment(elements: any[], key: Key) {
 	const fiber = new FiberNode(Fragment, elements, key);
 	return fiber;
+}
+
+export function createFiberFromOffscreen(pendingProps: OffscreenProps) {
+	const fiber = new FiberNode(OffscreenComponent, pendingProps, null);
+	return fiber;
+}
+
+export interface OffscreenProps {
+	mode: 'visible' | 'hidden';
+	children: any;
 }

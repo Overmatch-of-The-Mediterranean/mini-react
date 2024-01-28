@@ -14,14 +14,22 @@ import {
 	PendingPassiveEffects,
 	createWorkInProgress
 } from './fiber';
-import { MutationMask, NoFlags, PassiveMask } from './fiberFlags';
+import {
+	HostEffectMask,
+	MutationMask,
+	NoFlags,
+	PassiveMask
+} from './fiberFlags';
 import {
 	Lane,
 	NoLane,
 	SyncLane,
 	getHignesPriorityLane,
+	getNextLane,
 	lanesToSchedulerPriority,
-	markRootFinished
+	markRootFinished,
+	markRootSuspended,
+	mergeLanes
 } from './fiberLanes';
 import { flushSyncCallbacks, scheduleSyncCallback } from './syncTaskQueue';
 import { HostRoot } from './workTags';
@@ -33,6 +41,10 @@ import {
 	unstable_shouldYield
 } from 'scheduler';
 import { HookHasEffect, Passive } from './hookEffectTags';
+import { SuspenseException, getSuspenseThenable } from './thenable';
+import { resetHooksOnUnwind } from './fiberHooks';
+import { throwException } from './fiberThrow';
+import { unwindWork } from './fiberUnwindWork';
 
 // 指向正在工作的fiberNode。类似Vue中的activeEffect吗
 let workInProgress: FiberNode | null = null;
@@ -44,16 +56,39 @@ let wipRootRenderLane = NoLane;
 let rootDoesHasPassiveEffects = false;
 
 type ExitStatus = number;
+
+//工作中的状态
+const RootInProgress = 0;
+// 并发更新中途打断
 const RootInComplete = 1;
+// render完成
 const RootCompleted = 2;
+
+const RootDidNotComplete = 3;
+
+let wipRootExitStatus: number = RootInProgress;
+
+type SuspendedReason = typeof NoSuspended | typeof SuspendedOnData;
+const NoSuspended = 0;
+const SuspendedOnData = 1;
+
+let wipSuspendedReason: SuspendedReason = NoSuspended;
+
+let wipThrownValue: any = null;
 
 // 初始化指向根节点
 export const prepareFreshStack = (root: FiberRootNode, lane: Lane) => {
 	root.finishedLane = NoLane;
 	root.finishedWork = null;
 	// 传入FiberRootNode的current，也就是当前正在显示的UI对应的HostRootFiber
+
 	workInProgress = createWorkInProgress(root.current, {});
+
 	wipRootRenderLane = lane;
+
+	wipThrownValue = null;
+	wipSuspendedReason = NoSuspended;
+	wipRootExitStatus = RootInProgress;
 };
 
 export const scheduleUpdateOnFiber = (fiber: FiberNode, lane: Lane) => {
@@ -65,17 +100,18 @@ export const scheduleUpdateOnFiber = (fiber: FiberNode, lane: Lane) => {
 
 	// 传入 wip HostRootFiber，开始reconciler流程
 	// 此函数便是scheduleUpdateOnFiber有调度更新作用的关键函数
+
 	ensureRootIsScheduled(root);
 };
 
 // 确保根被调度更新
-function ensureRootIsScheduled(root: FiberRootNode) {
+export function ensureRootIsScheduled(root: FiberRootNode) {
 	// 获取优先级最高的update对应的优先数
-	const updateLane = getHignesPriorityLane(root.pendingLanes);
+	const updateLane = getNextLane(root);
 	let existingCallback = root.callbackNode;
 
 	//策略逻辑
-	if (updateLane === NoFlags) {
+	if (updateLane === NoLane) {
 		if (existingCallback !== null) {
 			unstable_cancelCallback(existingCallback);
 		}
@@ -101,6 +137,7 @@ function ensureRootIsScheduled(root: FiberRootNode) {
 			updateLane
 		);
 	}
+
 	let newCallbackNode = null;
 
 	if (updateLane === SyncLane) {
@@ -122,7 +159,7 @@ function ensureRootIsScheduled(root: FiberRootNode) {
 
 // 收集update任务对应的lane
 export function markRootUpdated(root: FiberRootNode, lane: Lane) {
-	root.pendingLanes = root.pendingLanes | lane;
+	root.pendingLanes = mergeLanes(root.pendingLanes, lane);
 }
 
 // 无论从哪个fiberNode开始调度更新，都会向上找到其HostRootFiber
@@ -155,7 +192,7 @@ function performConcurrentWorkOnRoot(
 		}
 	}
 
-	const lane = getHignesPriorityLane(root.pendingLanes);
+	const lane = getNextLane(root);
 	const curCallbackNode = root.callbackNode;
 	if (lane === NoLane) {
 		return null;
@@ -165,31 +202,39 @@ function performConcurrentWorkOnRoot(
 
 	const exitStatus = rootRender(root, lane, !needSync);
 
-	ensureRootIsScheduled(root);
+	switch (exitStatus) {
+		case RootInComplete:
+			if (root.callbackNode !== curCallbackNode) {
+				return null;
+			}
 
-	if (exitStatus === RootInComplete) {
-		if (root.callbackNode !== curCallbackNode) {
-			return null;
-		}
-
-		return performConcurrentWorkOnRoot.bind(null, root);
-	}
-	if (exitStatus === RootCompleted) {
-		// finishedWork用来存储 经reconciler构建好的wip Fiber tree的HostRootFiber
-		const finishedWork = root.current.alternate;
-		root.finishedWork = finishedWork;
-		root.finishedLane = lane;
-		wipRootRenderLane = NoLane;
-		// renderer
-		commitRoot(root);
-	} else if (__DEV__) {
-		console.warn('还未处理的并发更新终止状态');
+			return performConcurrentWorkOnRoot.bind(null, root);
+		case RootCompleted:
+			// finishedWork用来存储 经reconciler构建好的wip Fiber tree的HostRootFiber
+			const finishedWork = root.current.alternate;
+			root.finishedWork = finishedWork;
+			root.finishedLane = lane;
+			wipRootRenderLane = NoLane;
+			// renderer
+			commitRoot(root);
+			// return;
+			break;
+		case RootDidNotComplete:
+			wipRootRenderLane = NoLane;
+			markRootSuspended(root, lane);
+			ensureRootIsScheduled(root);
+			break;
+		default:
+			if (__DEV__) {
+				console.warn('还未处理的并发更新终止状态');
+			}
+			break;
 	}
 }
 
 // 同步流程
 function performSyncWorkOnRoot(root: FiberRootNode) {
-	const nextLane = getHignesPriorityLane(root.pendingLanes);
+	const nextLane = getNextLane(root);
 
 	if (nextLane !== SyncLane) {
 		// 其他比SyncLane低的优先级或者NoLane时
@@ -198,22 +243,32 @@ function performSyncWorkOnRoot(root: FiberRootNode) {
 	}
 	const exitStatus = rootRender(root, nextLane, false);
 
-	if (exitStatus === RootCompleted) {
-		// finishedWork用来存储 经reconciler构建好的wip Fiber tree的HostRootFiber
-		const finishedWork = root.current.alternate;
-		root.finishedWork = finishedWork;
-		root.finishedLane = nextLane;
-		wipRootRenderLane = NoLane;
-		// renderer
-		commitRoot(root);
-	} else if (__DEV__) {
-		console.warn('还未处理的同步更新终止状态');
+	switch (exitStatus) {
+		case RootCompleted:
+			// finishedWork用来存储 经reconciler构建好的wip Fiber tree的HostRootFiber
+			const finishedWork = root.current.alternate;
+			root.finishedWork = finishedWork;
+			root.finishedLane = nextLane;
+			wipRootRenderLane = NoLane;
+			// renderer
+			commitRoot(root);
+			break;
+		case RootDidNotComplete:
+			wipRootRenderLane = NoLane;
+			markRootSuspended(root, nextLane);
+			ensureRootIsScheduled(root);
+			break;
+		default:
+			if (__DEV__) {
+				console.warn('还未处理的同步更新终止状态');
+			}
+			break;
 	}
 }
 
 function rootRender(root: FiberRootNode, lane: Lane, shouldTimeSlice: boolean) {
 	if (__DEV__) {
-		console.log(`开始${shouldTimeSlice ? '并发' : '同步'}更新`);
+		console.log(`开启${shouldTimeSlice ? '并发' : '同步'}更新`);
 	}
 
 	if (wipRootRenderLane !== lane) {
@@ -223,15 +278,28 @@ function rootRender(root: FiberRootNode, lane: Lane, shouldTimeSlice: boolean) {
 
 	do {
 		try {
+			if (wipSuspendedReason !== NoSuspended && workInProgress !== null) {
+				// 对suspense的fiber挂起时的处理
+				const thrownValue = wipThrownValue;
+				wipSuspendedReason = NoSuspended;
+				wipThrownValue = null;
+				throwAndUnwindWorkLoop(root, workInProgress, thrownValue, lane);
+			}
+
 			shouldTimeSlice ? workLoopConcurrent() : workLoopSync();
 			break;
 		} catch (error) {
 			if (__DEV__) {
+				// debugger;
 				console.warn('workLoop发生错误', error);
 			}
-			workInProgress = null;
+			handleThrow(root, error);
 		}
 	} while (true);
+
+	if (wipRootExitStatus !== RootInProgress) {
+		return wipRootExitStatus;
+	}
 
 	// 中断或执行完成
 	if (shouldTimeSlice && workInProgress !== null) {
@@ -247,6 +315,65 @@ function rootRender(root: FiberRootNode, lane: Lane, shouldTimeSlice: boolean) {
 	return RootCompleted;
 }
 
+function throwAndUnwindWorkLoop(
+	root: FiberRootNode,
+	unitOfWork: FiberNode,
+	thrownValue: any,
+	lane: Lane
+) {
+	// 重置FC全局变量
+	resetHooksOnUnwind(unitOfWork);
+	// 请求返回后重新触发更新
+	throwException(root, thrownValue, lane);
+	// unwind
+	unwindUnitOfWork(unitOfWork);
+}
+
+// 从当前抛出Promise的节点开始处理，向上遍历找到距离该节点最近的Suspense组件对应的Fiber
+function unwindUnitOfWork(unitOfWork: FiberNode) {
+	let inCompleteWork: FiberNode | null = unitOfWork;
+
+	do {
+		const next = unwindWork(inCompleteWork); // 判断是否是Suspense组件对应的Fiber
+		if (next !== null) {
+			next.flags &= HostEffectMask;
+			// 找到距离该节点最近的Suspense组件对应的Fiber，由该节点开始向下的beginWork
+			workInProgress = next;
+			return;
+		}
+
+		// 向上查找
+		const returnFiber = inCompleteWork.return as FiberNode;
+		// 将沿途fiber中要删除的节点清空，因为需要重新进行beginWork
+		if (returnFiber !== null) {
+			returnFiber.deletions = null;
+		}
+
+		inCompleteWork = returnFiber;
+	} while (inCompleteWork !== null);
+
+	// debugger;
+	workInProgress = null;
+	wipRootExitStatus = RootDidNotComplete;
+	// workInProgress = null;
+	// TODO
+}
+
+// 1.对于suspense抛出的错误，则赋值挂起原因以及promise
+// 2.对于错误的处理 // TODO
+function handleThrow(root: FiberRootNode, thrownValue: any) {
+	if (thrownValue === SuspenseException) {
+		// 对于render阶段挂起的处理，获取抛出的promise
+		thrownValue = getSuspenseThenable();
+		// 标记挂起原因
+		wipSuspendedReason = SuspendedOnData;
+	} else {
+		// TODO
+	}
+	// 赋值抛出的错误或promise
+	wipThrownValue = thrownValue;
+}
+
 // 开始commit(renderer)，
 function commitRoot(root: FiberRootNode) {
 	// 拿到wip Fiber tree的HostRootFiber
@@ -255,12 +382,14 @@ function commitRoot(root: FiberRootNode) {
 	if (finishedWork === null) {
 		return;
 	}
-
+	// debugger;
 	if (__DEV__) {
 		console.warn('开始commit阶段', finishedWork);
 	}
 
 	const lane = root.finishedLane;
+
+	console.log('finishedWork', finishedWork);
 
 	if (lane === NoLane && __DEV__) {
 		console.warn('commit阶段finishedLane不应该是NoLane');
@@ -290,8 +419,9 @@ function commitRoot(root: FiberRootNode) {
 
 	// 判断是否有需要执行对应DOM操作的flags
 	const subTreeHasEffect =
-		(finishedWork.subTreeFlags & MutationMask) !== NoFlags;
-	const rootHasEffect = (finishedWork.flags & MutationMask) !== NoFlags;
+		(finishedWork.subTreeFlags & (MutationMask | PassiveMask)) !== NoFlags;
+	const rootHasEffect =
+		(finishedWork.flags & (MutationMask | PassiveMask)) !== NoFlags;
 
 	// 代表新生成的wip Fiber tree中有需要进行操作的Flags标记
 	if (subTreeHasEffect || rootHasEffect) {
@@ -308,7 +438,6 @@ function commitRoot(root: FiberRootNode) {
 		root.current = finishedWork;
 	}
 	rootDoesHasPassiveEffects = false;
-
 	// commit结束后，就要执行useEffect中的异步回调了
 	ensureRootIsScheduled(root);
 }
@@ -345,12 +474,14 @@ function flushPassiveEffects(pendingPassiveEffects: PendingPassiveEffects) {
 	return didFlushPassiveEffect;
 }
 
+// 并发更新
 function workLoopConcurrent() {
 	while (workInProgress !== null && !unstable_shouldYield()) {
 		performUnitOfWork(workInProgress);
 	}
 }
 
+// 同步更新
 function workLoopSync() {
 	while (workInProgress !== null) {
 		performUnitOfWork(workInProgress);
@@ -361,6 +492,8 @@ function workLoopSync() {
 function performUnitOfWork(fiber: FiberNode) {
 	// beginWork根据当期FiberNode创建下一级FiberNode
 	const next = beginWork(fiber, wipRootRenderLane);
+	// console.log('next', next);
+
 	fiber.memoizedProps = fiber.pendingProps;
 
 	if (next === null) {

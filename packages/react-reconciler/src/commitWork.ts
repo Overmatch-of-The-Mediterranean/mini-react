@@ -9,33 +9,41 @@ import {
 	PassiveMask,
 	Placement,
 	Ref,
-	Update
+	Update,
+	Visibility
 } from './fiberFlags';
 import {
+	Fragment,
 	FunctionComponent,
 	HostComponent,
 	HostRoot,
-	HostText
+	HostText,
+	OffscreenComponent
 } from './workTags';
 import {
 	Container,
 	Instance,
 	appendChildToContainer,
 	commitUpdate,
+	hideInstance,
+	hideTextInstance,
 	insertChildToContainer,
-	removeChild
+	removeChild,
+	unhideInstance,
+	unhideTextInstance
 } from 'hostConfig';
 import { UpdateQueue } from './updateQueue';
 import { Effect, EffectCallback, FCUpdateQueue } from './fiberHooks';
 import { HookHasEffect } from './hookEffectTags';
 
+let nextEffect: FiberNode | null = null;
 export const commitEffects = (
 	phrase: 'mutation' | 'layout',
 	mask: Flags,
 	callback: (fiber: FiberNode, root: FiberRootNode) => void
 ) => {
 	return (finishedWork: FiberNode, root: FiberRootNode) => {
-		let nextEffect: FiberNode | null = finishedWork;
+		nextEffect = finishedWork;
 		// 开始进行DFS的向下递的过程，找到这一条路径上最后一个有与Mutation阶段相关的flags的FiberNode
 		while (nextEffect !== null) {
 			const child: FiberNode | null = nextEffect.child;
@@ -103,7 +111,89 @@ export const commitMutationEffectsOnFiber = (
 	if ((flags & Ref) !== NoFlags && tag === HostComponent) {
 		safelyDetachRef(finishedWork);
 	}
+
+	// Suspense的children与fallback需要进行显示处理
+	if ((flags & Visibility) !== NoFlags && tag === OffscreenComponent) {
+		const isHidden = finishedWork.pendingProps.mode === 'hidden';
+		hideOrUnhideAllChildren(finishedWork, isHidden);
+		finishedWork.flags &= ~Visibility;
+	}
 };
+
+// 对Suspense的children的display属性进行操作，控制children显示与隐藏
+function hideOrUnhideAllChildren(finishedwork: FiberNode, isHidden: boolean) {
+	findHostSubtreeRoot(finishedwork, (hostRoot) => {
+		const instance = hostRoot.stateNode;
+		if (hostRoot.tag === HostComponent) {
+			isHidden ? hideInstance(instance) : unhideInstance(instance);
+		} else if (hostRoot.tag === HostText) {
+			isHidden
+				? hideTextInstance(instance)
+				: unhideTextInstance(instance, hostRoot.memoizedProps.content);
+		}
+	});
+}
+
+/* 
+    <Suspense>
+        hello
+        <div>
+            <span>123</span>
+        </div>
+    </Suspense>
+*/
+// 找到Suspense的children中所有子树根的HostRootFiber
+function findHostSubtreeRoot(
+	finishedwork: FiberNode,
+	callback: (hostSubtreeRoot: FiberNode) => void
+) {
+	let node = finishedwork;
+	let hostSubtreeRoot: FiberNode | null = null;
+
+	while (true) {
+		if (node.tag === HostComponent) {
+			if (hostSubtreeRoot === null) {
+				hostSubtreeRoot = node;
+				callback(node);
+			}
+		} else if (node.tag === HostText) {
+			if (hostSubtreeRoot === null) {
+				callback(node);
+			}
+		} else if (
+			node.tag === OffscreenComponent &&
+			node.pendingProps.mode === 'hidden' &&
+			node !== finishedwork
+		) {
+			// 对嵌套的Suspense情况进行跳过
+		} else if (node.child !== null) {
+			node.child.return = node;
+			node = node.child;
+			continue;
+		}
+
+		if (node === finishedwork) {
+			return;
+		}
+
+		while (node.sibling === null) {
+			if (node.return === null || node.return === finishedwork) {
+				return;
+			}
+
+			if (hostSubtreeRoot === node) {
+				hostSubtreeRoot = null;
+			}
+			node = node.return;
+		}
+
+		if (hostSubtreeRoot === node) {
+			hostSubtreeRoot = null;
+		}
+		node.sibling.return = node.return;
+		node = node.sibling;
+	}
+}
 
 export const commitMutationEffects = commitEffects(
 	'mutation',
@@ -128,6 +218,8 @@ export const commitLayoutEffects = commitEffects(
 	Ref,
 	commitLayoutEffectsOnFiber
 );
+
+// 解绑Ref
 function safelyDetachRef(fiber: FiberNode) {
 	const ref = fiber.ref;
 	if (ref !== null) {
@@ -139,13 +231,16 @@ function safelyDetachRef(fiber: FiberNode) {
 	}
 }
 
+// 绑定Ref
 function safelyAttachRef(fiber: FiberNode) {
 	const ref = fiber.ref;
 	if (ref !== null) {
 		const instance = fiber.stateNode;
 		if (typeof ref === 'function') {
+			// <div ref={(dom)=>console.log(dom)}></div>
 			ref(instance);
 		} else {
+			// <div ref={domRef}></div>
 			ref.current = instance;
 		}
 	}
@@ -274,6 +369,7 @@ export const commitDeletion = (
 
 	// 递归遍历子树，对每个fiber都执行该方法，看是否是根host
 	commitNestedComponent(childToDelete, (unmountFiber: FiberNode) => {
+		// debugger;
 		switch (unmountFiber.tag) {
 			case HostComponent:
 				recordHostChildrenToDelete(rootChildrenToDelete, unmountFiber);
@@ -289,7 +385,7 @@ export const commitDeletion = (
 				return;
 			default:
 				if (__DEV__) {
-					console.warn('未处理的unmount类型');
+					console.warn('未处理的unmount类型', unmountFiber);
 				}
 				break;
 		}

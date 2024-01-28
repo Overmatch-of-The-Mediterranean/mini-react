@@ -1,6 +1,6 @@
 import internals from 'shared/internals';
 import { FiberNode } from './fiber';
-import { Action, ReactContext } from 'shared/ReactTypes';
+import { Action, ReactContext, Thenable, Usable } from 'shared/ReactTypes';
 import { Dispatch, Dispatcher } from 'react/src/currentDispatcher';
 import currentBatchConfig from 'react/src/currentBatchConfig';
 import {
@@ -15,6 +15,7 @@ import { scheduleUpdateOnFiber } from './workLoop';
 import { Lane, NoLane, requestUpdateLane } from './fiberLanes';
 import { Flags, PassiveEffect } from './fiberFlags';
 import { HookHasEffect, Passive } from './hookEffectTags';
+import { trackUsedThenable } from './thenable';
 // 存储当前FC对应的FiberNode
 let currentlyRenderingFiber: FiberNode | null = null;
 
@@ -102,7 +103,8 @@ const HooksDispatcherOnMount: Dispatcher = {
 	useEffect: mountEffect,
 	useTransition: mountTransition,
 	useRef: mountRef,
-	useContext: readContext
+	useContext: readContext,
+	use
 };
 
 const HooksDispatcherOnUpdate: Dispatcher = {
@@ -110,8 +112,24 @@ const HooksDispatcherOnUpdate: Dispatcher = {
 	useEffect: updateEffect,
 	useTransition: updateTransition,
 	useRef: updateRef,
-	useContext: readContext
+	useContext: readContext,
+	use
 };
+
+function use<T>(usable: Usable<T>) {
+	if (usable !== null && typeof usable === 'object') {
+		if (typeof (usable as Thenable<T>).then === 'function') {
+			const thenable = usable as Thenable<T>;
+			return trackUsedThenable(thenable);
+		} else {
+			const context = usable as ReactContext<T>;
+
+			return readContext(context);
+		}
+	}
+
+	throw new Error(`use不支持的参数：${usable}`);
+}
 
 function readContext<T>(context: ReactContext<T>): T {
 	const consumer = currentlyRenderingFiber;
@@ -179,7 +197,7 @@ function updateState<State>(): [State, Dispatch<State>] {
 	let baseQueue = current.baseQueue;
 
 	if (pending !== null) {
-		// pendingQueue和baseQueue保存在current中
+		// pendingQueue和baseQueue合并后保存在current中
 		if (baseQueue !== null) {
 			const baseFirst = baseQueue.next;
 			const pendingFirst = pending.next;
@@ -189,6 +207,7 @@ function updateState<State>(): [State, Dispatch<State>] {
 		}
 
 		baseQueue = pending;
+		// 保存在current中
 		current.baseQueue = baseQueue;
 		// 将链表重置，防止上次更新的update残留
 		queue.shared.pending = null;
@@ -271,6 +290,7 @@ function mountTransition(): [boolean, (callback: () => void) => void] {
 	const [isPending, setPending] = mountState(false);
 	const hook = mountWorkInProgressHook();
 
+	// 将start存储在memoizedState中
 	const start = startTransition.bind(null, setPending);
 	hook.memoizedState = start;
 
@@ -287,6 +307,7 @@ function updateTransition(): [boolean, (callback: () => void) => void] {
 }
 
 function startTransition(setPending: Dispatch<boolean>, callback: () => void) {
+	// 正常更新
 	setPending(true);
 
 	// 改变优先级
@@ -463,4 +484,10 @@ function mountWorkInProgressHook(): Hook {
 		workInProgressHook = hook;
 	}
 	return workInProgressHook!;
+}
+
+export function resetHooksOnUnwind(wip: FiberNode) {
+	currentlyRenderingFiber = null;
+	currentHook = null;
+	workInProgressHook = null;
 }

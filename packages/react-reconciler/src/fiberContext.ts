@@ -5,7 +5,7 @@ let prevContextValue: any = null;
 const prevContextValueStack: any[] = [];
 
 export function pushProvider<T>(context: ReactContext<T>, newValue: T) {
-	debugger;
+	// debugger;
 	// 仆人(背后背个框子代表prevContextValueStack)，仆人的手代表prevContextValue，少爷A(ctx的值代表衣服)，少爷B
 	// pushProvider代表穿上新衣服
 	// popProvider代表换回旧衣服
@@ -22,7 +22,7 @@ export function pushProvider<T>(context: ReactContext<T>, newValue: T) {
 }
 
 export function popProvider<T>(context: ReactContext<T>) {
-	debugger;
+	// debugger;
 	context._currentValue = prevContextValue;
 	prevContextValue = prevContextValueStack.pop();
 }

@@ -54,6 +54,9 @@ export function getHignesPriorityLane(lanes: Lanes): Lane {
 // 在commit阶段开始时，从Lanes中移除已经执行过的update对应的lane
 export function markRootFinished(root: FiberRootNode, lane: Lane) {
 	root.pendingLanes &= ~lane;
+
+	root.suspendedLanes = NoLanes;
+	root.pingdLanes = NoLanes;
 }
 
 export function lanesToSchedulerPriority(lanes: Lanes) {
@@ -87,4 +90,36 @@ export function schedulerPriorityToLane(priority: number): Lane {
 	}
 
 	return NoLane;
+}
+
+// 将Suspended标记从总的标记中区分出来
+export function markRootSuspended(root: FiberRootNode, suspendedLane: Lane) {
+	root.suspendedLanes |= suspendedLane;
+	root.pendingLanes &= ~suspendedLane;
+}
+
+// 将pingdLane标记从总的标记中区分出来
+export function markRootpinged(root: FiberRootNode, pingdLane: Lane) {
+	root.pingdLanes |= root.suspendedLanes & pingdLane;
+}
+
+export function getNextLane(root: FiberRootNode): Lane {
+	const pendingLanes = root.pendingLanes;
+
+	if (pendingLanes === NoLane) {
+		return NoLane;
+	}
+
+	let nextLane = NoLane;
+	// 排除掉挂起的lane
+	const suspendedLanes = pendingLanes & ~root.suspendedLanes;
+	if (suspendedLanes !== NoLanes) {
+		nextLane = getHignesPriorityLane(suspendedLanes);
+	} else {
+		const pingdLanes = pendingLanes & root.pingdLanes;
+		if (pingdLanes !== NoLanes) {
+			nextLane = getHignesPriorityLane(pingdLanes);
+		}
+	}
+	return nextLane;
 }

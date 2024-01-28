@@ -64,6 +64,24 @@ export const removeChild = (
 	parent.removeChild(child);
 };
 
+export const hideInstance = (instance: Instance) => {
+	const style = (instance as HTMLElement).style;
+	style.setProperty('display', 'none', 'important');
+};
+
+export const unhideInstance = (instance: Instance) => {
+	const style = (instance as HTMLElement).style;
+	style.display = '';
+};
+
+export const hideTextInstance = (textInstance: Instance) => {
+	textInstance.nodeValue = '';
+};
+
+export const unhideTextInstance = (textInstance: Instance, text: string) => {
+	textInstance.nodeValue = text;
+};
+
 export const scheduleMicroTask =
 	typeof queueMicrotask === 'function'
 		? queueMicrotask
